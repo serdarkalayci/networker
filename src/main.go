@@ -9,32 +9,16 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/serdarkalayci/networker/data"
 	"github.com/serdarkalayci/networker/handlers"
 
 	"github.com/gorilla/mux"
-	"github.com/nicholasjackson/env"
+	"github.com/serdarkalayci/networker/env"
 )
 
-var bindAddress = *env.String("BASE_URL", true, ":5500", "Bind address for the server")
-
-var t1 = *env.Int("T1", false, 2, "The first treshold to be counted")
-var t2 = *env.Int("T2", false, 5, "The second treshold to be counted")
-var t3 = *env.Int("T3", false, 10, "The third treshold to be counted")
-var ot = *env.Int("OT", false, 10, "The treshold to be logged specifically")
+var bindAddress = env.String("BASE_URL", ":5600")
 
 func main() {
 	l := log.New(os.Stdout, "networker ", log.LstdFlags)
-
-	if bindAddress == "" {
-		bindAddress = ":5500"
-	}
-	if t1 == 0 {
-		t1 = 2
-		t2 = 5
-		t3 = 10
-		ot = 10
-	}
 
 	// create the handlers
 	apiContext := handlers.NewAPIContext()
@@ -48,6 +32,7 @@ func main() {
 	getR.HandleFunc("/health/live", apiContext.Live)
 	getR.HandleFunc("/health/ready", apiContext.Ready)
 	getR.HandleFunc("/log", apiContext.Logs)
+	getR.HandleFunc("/reset", apiContext.Reset)
 
 	// create a new server
 	s := http.Server{
@@ -70,46 +55,7 @@ func main() {
 		}
 	}()
 
-	go func() {
-		for {
-			timeStart := time.Now()
-			resp, err := http.Get("http://google.com")
-			timeEnd := time.Now()
-			duration := timeEnd.Sub(timeStart).Milliseconds()
-			totalTime := apiContext.LogRecord.AverageDuration * float64(apiContext.LogRecord.TotalCalls)
-			apiContext.LogRecord.AverageDuration = totalTime / float64(apiContext.LogRecord.TotalCalls+1)
-			apiContext.LogRecord.TotalCalls++
-			if err != nil {
-				apiContext.LogRecord.ErrorCount++
-				errorRecord := data.ErrorRecord{
-					Timestamp: timeStart,
-					Duration:  duration,
-					Error:     err.Error(),
-				}
-				apiContext.LogRecord.ErrorRecords = append(apiContext.LogRecord.ErrorRecords, errorRecord)
-			} else {
-				resp.Body.Close()
-				if duration > int64(t1*1000) {
-					apiContext.LogRecord.T1Count++
-				}
-				if duration > int64(t2*1000) {
-					apiContext.LogRecord.T2Count++
-				}
-				if duration > int64(t3*1000) {
-					apiContext.LogRecord.T3Count++
-				}
-				if duration > int64(ot*1000) {
-					logRecord := data.LogRecord{
-						Timestamp: timeStart,
-						Duration:  duration,
-					}
-					apiContext.LogRecord.OutlierRecords = append(apiContext.LogRecord.OutlierRecords, logRecord)
-				}
-			}
-			l.Println(fmt.Sprintf("Duration %d milliseconds", duration))
-			time.Sleep(2 * time.Second)
-		}
-	}()
+	go checkAddress(apiContext)
 
 	// trap sigterm or interupt and gracefully shutdown the server
 	c := make(chan os.Signal, 1)
